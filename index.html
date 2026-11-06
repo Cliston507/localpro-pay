@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LocalPro Pay</title>
+<style>
+  :root { --ink:#14213d; --muted:#4a5568; --bg:#f7f5f0; --card:#fff; --brand:#0b5fff;
+          --ok:#13795b; --warn:#a15c00; --bad:#b42318; --line:#d9d4c7; }
+  * { box-sizing: border-box; }
+  body { margin:0; font: 20px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+         color:var(--ink); background:var(--bg); }
+  header { background:var(--ink); color:#fff; padding:18px 20px; }
+  header h1 { margin:0; font-size:28px; }
+  header p { margin:4px 0 0; opacity:.85; font-size:18px; }
+  main { max-width:760px; margin:0 auto; padding:20px; }
+  .card { background:var(--card); border:2px solid var(--line); border-radius:14px;
+          padding:20px; margin:0 0 18px; }
+  h2 { margin:0 0 12px; font-size:24px; }
+  label { display:block; font-weight:600; margin:14px 0 6px; }
+  input, textarea { width:100%; font:inherit; padding:12px; border:2px solid #8a8a8a;
+                    border-radius:10px; background:#fff; }
+  textarea { min-height:90px; }
+  button, .btn { display:inline-block; font:inherit; font-weight:700; padding:14px 22px;
+                 border-radius:12px; border:0; cursor:pointer; margin:8px 8px 0 0;
+                 text-decoration:none; min-height:56px; }
+  .primary { background:var(--brand); color:#fff; }
+  .good { background:var(--ok); color:#fff; }
+  .danger { background:#fff; color:var(--bad); border:2px solid var(--bad); }
+  .plain { background:#e8e4d8; color:var(--ink); }
+  button:disabled { opacity:.5; cursor:wait; }
+  button:focus-visible, input:focus-visible, textarea:focus-visible { outline:4px solid #ffbf47; }
+  .step { border-left:8px solid var(--line); }
+  .step.held, .step.pending_approval { border-left-color:var(--brand); }
+  .step.submitted { border-left-color:var(--warn); }
+  .step.released { border-left-color:var(--ok); }
+  .step.voided { border-left-color:#999; }
+  .row { display:flex; justify-content:space-between; gap:12px; flex-wrap:wrap; align-items:baseline; }
+  .amount { font-size:26px; font-weight:800; }
+  .badge { display:inline-block; padding:4px 12px; border-radius:999px; font-size:17px;
+           font-weight:700; background:#eee; }
+  .muted { color:var(--muted); }
+  .verdict { border-radius:10px; padding:12px 14px; margin-top:12px; }
+  .verdict.looks_done { background:#e6f4ee; } .verdict.needs_review { background:#fff4e0; }
+  .tips li { margin-bottom:6px; }
+  .link { word-break:break-all; font-size:16px; background:#f2f2f2; padding:8px; border-radius:8px; }
+  img.proof { max-width:100%; border-radius:10px; margin-top:10px; border:2px solid var(--line); }
+  .error { background:#fde8e7; color:var(--bad); padding:12px; border-radius:10px; font-weight:600; }
+  .log { font-size:17px; } .log div { padding:6px 0; border-bottom:1px solid #eee; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<header>
+  <h1>LocalPro Pay</h1>
+  <p>Pay for home repairs one step at a time. Your money stays yours until the work is done.</p>
+</header>
+<main>
+  <div id="error" class="error hidden" role="alert"></div>
+  <div id="app" aria-live="polite"></div>
+</main>
+
+<script>
+const $app = document.getElementById("app");
+const $err = document.getElementById("error");
+const params = new URLSearchParams(location.search);
+let JOB = params.get("job"), KEY = params.get("key"), current = null;
+
+const money = c => "$" + (c / 100).toLocaleString("en-US", {minimumFractionDigits: 2});
+const esc = s => String(s ?? "").replace(/[&<>"']/g, ch =>
+  ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[ch]));
+const STATUS = {
+  planned: ["Not paid yet", "#eee"],
+  pending_approval: ["Waiting for PayPal", "#dbe7ff"],
+  held: ["Money held in PayPal", "#dbe7ff"],
+  submitted: ["Proof photo sent", "#fff0cc"],
+  released: ["Paid to contractor", "#d6f0e3"],
+  voided: ["Cancelled, money kept", "#e5e5e5"],
+};
+
+function showError(msg) { $err.textContent = msg; $err.classList.toggle("hidden", !msg); if (msg) $err.scrollIntoView({behavior:"smooth"}); }
+
+async function api(path, opts = {}) {
+  opts.headers = Object.assign({"X-Job-Key": KEY || ""}, opts.headers || {});
+  const r = await fetch(path, opts);
+  const body = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(body.error || "Something went wrong. Please try again.");
+  return body;
+}
+
+function speak(text) {
+  try {
+    if (!("speechSynthesis" in window)) return;
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.rate = 0.9;
+    speechSynthesis.speak(u);
+  } catch (e) {}
+}
+
+async function busy(btn, fn) {
+  btn.disabled = true; showError("");
+  try { await fn(); } catch (e) { showError(e.message); } finally { btn.disabled = false; }
+}
+
+// ------------------------------------------------------------ new job
+function renderNewJob() {
+  $app.innerHTML = `
+  <form class="card" id="newjob">
+    <h2>Start a new job</h2>
+    <p class="muted">Tell us about the repair. We'll split it into small steps so you never pay for work that isn't done.</p>
+    <label for="title">What needs fixing?</label>
+    <input id="title" required placeholder="Leaking roof over the kitchen">
+    <label for="description">Tell us more</label>
+    <textarea id="description" required placeholder="Replace damaged shingles and the wet board underneath."></textarea>
+    <label for="total">Price the contractor quoted</label>
+    <input id="total" required inputmode="decimal" placeholder="2400">
+    <label for="homeowner">Your name</label>
+    <input id="homeowner" required autocomplete="name" placeholder="Margaret">
+    <label for="contractor">Contractor's name</label>
+    <input id="contractor" required placeholder="Coastline Roofing">
+    <label for="helper">Someone you trust to approve payments</label>
+    <input id="helper" required placeholder="Dana (my daughter)">
+    <button class="primary" type="submit">Make my payment plan</button>
+  </form>`;
+  document.getElementById("newjob").onsubmit = e => {
+    e.preventDefault();
+    const btn = e.target.querySelector("button");
+    const val = id => document.getElementById(id).value;
+    busy(btn, async () => {
+      btn.textContent = "Making your plan…";
+      try {
+        const job = await api("/api/jobs", {method: "POST", headers: {"Content-Type": "application/json"},
+          body: JSON.stringify({title: val("title"), description: val("description"), total: val("total"),
+            homeowner: val("homeowner"), contractor: val("contractor"), helper: val("helper")})});
+        const u = new URL(job.links.homeowner); JOB = job.id; KEY = u.searchParams.get("key");
+        history.replaceState(null, "", u.pathname + u.search);
+        render(job);
+        speak(`Your plan is ready. ${job.milestones.length} steps. ${job.safety_tips[0]}`);
+      } finally { btn.textContent = "Make my payment plan"; }
+    });
+  };
+}
+
+// ------------------------------------------------------------ job view
+const ROLE_INTRO = {
+  homeowner: j => `Hi ${esc(j.homeowner)}. Hold money for one step at a time. <strong>${esc(j.helper)}</strong> approves each payment after seeing proof.`,
+  contractor: j => `Hi ${esc(j.contractor)}. Money for a step is held and ready. Send a clear photo when the step is done and you'll be paid once it's approved.`,
+  helper: j => `Hi ${esc(j.helper)}. ${esc(j.homeowner)} trusts you to approve payments. Look at the photo, then release the money or cancel the hold.`,
+};
+
+function stepActions(m, role) {
+  const b = [];
+  if (role === "homeowner" && (m.status === "planned" || m.status === "pending_approval"))
+    b.push(`<button class="primary" data-act="hold" data-id="${m.id}">Hold ${money(m.amount_cents)} with PayPal</button>`);
+  if (role === "contractor" && (m.status === "held" || m.status === "submitted"))
+    b.push(`<label class="btn primary" for="photo${m.id}">${m.status === "held" ? "Send proof photo" : "Send a better photo"}</label>
+            <input class="hidden" type="file" accept="image/*" capture="environment" id="photo${m.id}" data-act="photo" data-id="${m.id}">`);
+  if (role === "helper" && m.status === "submitted")
+    b.push(`<button class="good" data-act="release" data-id="${m.id}">Release ${money(m.amount_cents)}</button>`);
+  if ((role === "helper" || role === "homeowner") && (m.status === "held" || m.status === "submitted"))
+    b.push(`<button class="danger" data-act="cancel" data-id="${m.id}">Cancel hold</button>`);
+  return b.join("");
+}
+
+function render(job) {
+  current = job;
+  const role = job.role;
+  const [doneCents, heldCents] = job.milestones.reduce(([d, h], m) =>
+    [d + (m.status === "released" ? m.amount_cents : 0),
+     h + (["held","submitted"].includes(m.status) ? m.amount_cents : 0)], [0, 0]);
+  let html = `
+  <section class="card">
+    <div class="row"><h2>${esc(job.title)}</h2><span class="badge">You are the ${role}</span></div>
+    <p>${ROLE_INTRO[role](job)}</p>
+    <p class="muted">Total ${money(job.total_cents)} · Paid ${money(doneCents)} · Held ${money(heldCents)}</p>
+  </section>`;
+  if (role === "homeowner") html += `
+  <section class="card"><h2>Stay safe</h2><ul class="tips">${job.safety_tips.map(t => `<li>${esc(t)}</li>`).join("")}</ul></section>`;
+  for (const m of job.milestones) {
+    const [label, color] = STATUS[m.status];
+    const v = m.ai_verdict;
+    html += `
+    <section class="card step ${m.status}">
+      <div class="row"><h2>Step ${m.position}: ${esc(m.title)}</h2><span class="amount">${money(m.amount_cents)}</span></div>
+      <span class="badge" style="background:${color}">${label}</span>
+      <p class="muted">Proof needed: ${esc(m.proof_needed)}</p>
+      ${m.has_photo ? `<img class="proof" alt="Proof photo for step ${m.position}" src="/api/milestones/${m.id}/photo?key=${encodeURIComponent(KEY)}&t=${Date.now()}">` : ""}
+      ${v ? `<div class="verdict ${v.result}"><strong>AI check: ${v.result === "looks_done" ? "Looks done ✓" : "Needs a closer look"}</strong>
+              <p style="margin:6px 0">${esc(v.summary)}</p>
+              ${v.concerns.length ? `<ul>${v.concerns.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
+              <button class="plain" data-act="speak" data-id="${m.id}">🔊 Read aloud</button>
+              <p class="muted" style="font-size:16px;margin:6px 0 0">The AI only gives advice. A person always decides.</p></div>` : ""}
+      <div>${stepActions(m, role)}</div>
+    </section>`;
+  }
+  if (role === "homeowner" && job.links) html += `
+  <section class="card"><h2>Share these links</h2>
+    <p><strong>Send to ${esc(job.contractor)}</strong> (the contractor):</p><div class="link">${esc(job.links.contractor)}</div>
+    <button class="plain" data-copy="${esc(job.links.contractor)}">Copy contractor link</button>
+    <p><strong>Send to ${esc(job.helper)}</strong> (approves payments):</p><div class="link">${esc(job.links.helper)}</div>
+    <button class="plain" data-copy="${esc(job.links.helper)}">Copy helper link</button>
+    <p class="muted">Keep your own link private. Bookmark this page to come back.</p>
+  </section>`;
+  html += `<section class="card log"><h2>What happened</h2>${job.events.map(e =>
+    `<div><strong>${esc(e.actor)}:</strong> ${esc(e.message)} <span class="muted">· ${new Date(e.created_at*1000).toLocaleString()}</span></div>`).join("")}</section>
+  <button class="plain" data-act="refresh">Refresh</button>`;
+  $app.innerHTML = html;
+}
+
+$app.addEventListener("click", e => {
+  const t = e.target.closest("button"); if (!t) return;
+  if (t.dataset.copy) { navigator.clipboard?.writeText(t.dataset.copy); t.textContent = "Copied ✓"; return; }
+  const id = t.dataset.id, act = t.dataset.act;
+  if (act === "refresh") return busy(t, load);
+  if (act === "speak") { const m = current.milestones.find(x => x.id == id); return speak(m.ai_verdict.summary); }
+  if (act === "hold") return busy(t, async () => {
+    const r = await api(`/api/milestones/${id}/hold`, {method: "POST"}); location.href = r.approve_url; });
+  if (act === "release" && confirm("Release this money to the contractor? This can't be undone."))
+    return busy(t, async () => { render(await api(`/api/milestones/${id}/release`, {method: "POST"})); speak("Payment released."); });
+  if (act === "cancel" && confirm("Cancel this hold? The homeowner keeps the money."))
+    return busy(t, async () => { render(await api(`/api/milestones/${id}/cancel`, {method: "POST"})); speak("Hold cancelled. The money stays with the homeowner."); });
+});
+
+$app.addEventListener("change", e => {
+  const input = e.target; if (input.dataset.act !== "photo" || !input.files[0]) return;
+  const fd = new FormData(); fd.append("photo", input.files[0]);
+  const lbl = input.previousElementSibling; const old = lbl.textContent; lbl.textContent = "Checking photo…";
+  showError("");
+  api(`/api/milestones/${input.dataset.id}/photo`, {method: "POST", body: fd})
+    .then(async r => { speak(r.ai_verdict.summary); await load(); })
+    .catch(err => { showError(err.message); lbl.textContent = old; });
+});
+
+async function load() { render(await api(`/api/jobs/${JOB}`)); }
+
+if (JOB && KEY) load().catch(e => { showError(e.message); });
+else renderNewJob();
+</script>
+</body>
+</html>

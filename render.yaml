@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: localpro-pay
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn wsgi:app --workers 1 --threads 4 --timeout 90
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.7
+      - key: PAYPAL_ENV
+        value: sandbox
+      - key: GEMINI_MODEL
+        value: gemini-2.5-flash
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: DATABASE_PATH
+        value: /tmp/localpro.db
+      - key: UPLOAD_DIR
+        value: /tmp/uploads
