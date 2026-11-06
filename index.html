@@ -18,6 +18,7 @@
           padding:20px; margin:0 0 18px; }
   h2 { margin:0 0 12px; font-size:24px; }
   label { display:block; font-weight:600; margin:14px 0 6px; }
+  input::placeholder, textarea::placeholder { color:#a0a0a0; font-style:italic; }
   input, textarea { width:100%; font:inherit; padding:12px; border:2px solid #8a8a8a;
                     border-radius:10px; background:#fff; }
   textarea { min-height:90px; }
@@ -108,20 +109,26 @@ function renderNewJob() {
   <form class="card" id="newjob">
     <h2>Start a new job</h2>
     <p class="muted">Tell us about the repair. We'll split it into small steps so you never pay for work that isn't done.</p>
+    <button class="plain" type="button" id="example">Fill in an example</button>
     <label for="title">What needs fixing?</label>
-    <input id="title" required placeholder="Leaking roof over the kitchen">
+    <input id="title" required placeholder="e.g. Leaking roof">
     <label for="description">Tell us more</label>
-    <textarea id="description" required placeholder="Replace damaged shingles and the wet board underneath."></textarea>
+    <textarea id="description" required placeholder="e.g. Replace damaged shingles"></textarea>
     <label for="total">Price the contractor quoted</label>
-    <input id="total" required inputmode="decimal" placeholder="2400">
+    <input id="total" required inputmode="decimal" placeholder="e.g. 2400">
     <label for="homeowner">Your name</label>
-    <input id="homeowner" required autocomplete="name" placeholder="Margaret">
+    <input id="homeowner" required autocomplete="name" placeholder="e.g. Margaret">
     <label for="contractor">Contractor's name</label>
-    <input id="contractor" required placeholder="Coastline Roofing">
+    <input id="contractor" required placeholder="e.g. Coastline Roofing">
     <label for="helper">Someone you trust to approve payments</label>
-    <input id="helper" required placeholder="Dana (my daughter)">
+    <input id="helper" required placeholder="e.g. Dana (my daughter)">
     <button class="primary" type="submit">Make my payment plan</button>
   </form>`;
+  document.getElementById("example").onclick = () => {
+    const ex = {title: "Leaking roof over the kitchen", description: "Replace damaged shingles and the wet board underneath.",
+      total: "2400", homeowner: "Margaret", contractor: "Coastline Roofing", helper: "Dana (my daughter)"};
+    for (const [k, v] of Object.entries(ex)) document.getElementById(k).value = v;
+  };
   document.getElementById("newjob").onsubmit = e => {
     e.preventDefault();
     const btn = e.target.querySelector("button");
