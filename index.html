@@ -240,7 +240,10 @@ $app.addEventListener("change", e => {
 
 async function load() { render(await api(`/api/jobs/${JOB}`)); }
 
-if (JOB && KEY) load().catch(e => { showError(e.message); });
+if (JOB && KEY) load().catch(e => {
+  showError(e.message + " This link may be old (the demo server resets). Start a new job below.");
+  history.replaceState(null, "", "/"); JOB = KEY = null; renderNewJob();
+});
 else renderNewJob();
 </script>
 </body>
