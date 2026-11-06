@@ -78,17 +78,19 @@ class PayPalClient:
                 "description": description[:127],
                 "amount": {"currency_code": "USD", "value": _money(amount_cents)},
             }],
-            "payment_source": {"paypal": {"experience_context": {
-                "brand_name": "LocalPro Pay",
+            # Classic checkout context: the most reliable flow in PayPal Sandbox,
+            # including on phones and in-app browsers.
+            "application_context": {
                 "shipping_preference": "NO_SHIPPING",
-                "user_action": "PAY_NOW",
+                "user_action": "CONTINUE",
+                "landing_page": "LOGIN",
                 "return_url": return_url,
                 "cancel_url": cancel_url,
-            }}},
+            },
         }
         order = self._post("/v2/checkout/orders", body, request_id=f"create-{reference}-{uuid.uuid4()}")
         approve = next((l["href"] for l in order.get("links", [])
-                        if l.get("rel") in ("payer-action", "approve")), None)
+                        if l.get("rel") in ("approve", "payer-action")), None)
         if not approve:
             raise PayPalError("PayPal didn't return an approval link.")
         return order["id"], approve
