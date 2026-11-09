@@ -10,7 +10,7 @@ Older adults lose billions every year to home-repair scams. The usual pattern is
 
 ## How LocalPro Pay works
 
-1. **AI payment plan.** The homeowner describes the job and the quoted price. Gemini splits it into 2–4 steps that can each be checked with a photo. Code (not the AI) makes sure the steps add up to the exact price and that **no step is more than 50%**.
+1. **AI payment plan.** The homeowner describes the job and the quoted price. Gemini splits it into 3–5 steps that can each be checked with a photo. Code (not the AI) makes sure the steps add up to the exact price, that **the first step is 25% or less**, and that **no step is more than 50%**.
 2. **Money is held, not paid.** For each step the homeowner approves a PayPal order with `intent=AUTHORIZE`. The money is *held* on her account. The contractor can see it's real, but can't touch it.
 3. **Proof photo + AI check.** The contractor uploads a photo. Gemini checks it against the proof the homeowner asked for and explains the result in plain words, which the app can read aloud. If the AI isn't confident, the step is marked "needs a closer look".
 4. **A trusted person releases the money.** Only the **trusted helper** (a daughter, a son, a friend) can release a payment, which captures the authorization. A scammer who pressures the homeowner still can't get paid. The homeowner or the helper can cancel a hold at any time, which voids it so she keeps the money.
@@ -21,8 +21,8 @@ The AI gives advice only. It can never move money.
 
 Margaret, 78, lives alone on the Oregon coast. Her roof leaks over the kitchen and a roofer quotes $2,400. Her daughter Dana lives three hours away.
 
-1. Margaret describes the leak. LocalPro Pay makes a two-step plan and warns her never to pay the whole job up front.
-2. She holds $1,200 for step 1 in PayPal.
+1. Margaret describes the leak. LocalPro Pay makes a three-step plan and warns her never to pay the whole job up front.
+2. She holds a small first payment (25% or less) for step 1 in PayPal.
 3. The roofer sends a photo of the new shingles. The AI checks it and reads the result aloud.
 4. Dana opens her link, looks at the photo, and taps **Release**. The roofer is paid for exactly the work that's done.
 

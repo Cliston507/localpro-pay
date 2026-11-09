@@ -1,8 +1,8 @@
 """Gemini job planner and photo inspector, wrapped in code-enforced safety rails.
 
 The AI only *advises*. It never moves money. Whatever the model says, the code below:
-  * splits the job into 2-5 steps whose amounts add up exactly to the agreed total,
-  * caps any single step at 50% of the job (no "pay it all up front"),
+  * splits the job into 3-5 steps whose amounts add up exactly to the agreed total,
+  * caps the first step at 25% (a small start, not half the job) and every other step at 50%,
   * downgrades a photo check to "needs a closer look" unless the model is confident.
 Without GEMINI_API_KEY (or with LOCALPRO_MOCK=1) a simple built-in planner is used.
 """
@@ -14,6 +14,8 @@ import requests
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MAX_STEP_SHARE = 0.5
+FIRST_STEP_SHARE = 0.25  # the up-front step stays small
+MIN_STEPS = 3
 MIN_CONFIDENCE = 0.7
 
 ALWAYS_TIPS = [
@@ -55,18 +57,20 @@ def _gemini(parts, timeout=40):
 def _fallback_plan(description, total_cents):
     steps = [
         ("Materials delivered and work started",
-         "Photo of the materials on site and the work area prepared."),
+         "Photo of the materials on site and the work area prepared.", 0.2),
+        ("Main work done",
+         "Photo showing most of the repair finished.", 0.4),
         ("Job finished and cleaned up",
-         "Photo of the finished work and the area cleaned up."),
+         "Photo of the finished work and the area cleaned up.", 0.4),
     ]
-    return {"milestones": [{"title": t, "proof_needed": p, "share": 0.5} for t, p in steps],
+    return {"milestones": [{"title": t, "proof_needed": p, "share": w} for t, p, w in steps],
             "safety_tips": []}
 
 
 def enforce_plan(raw, total_cents):
     """Turn whatever the model returned into a safe, exact payment plan."""
     items = [m for m in (raw.get("milestones") or []) if isinstance(m, dict)][:5]
-    if len(items) < 2:
+    if len(items) < MIN_STEPS:
         items = _fallback_plan("", total_cents)["milestones"]
 
     weights = []
@@ -84,15 +88,16 @@ def enforce_plan(raw, total_cents):
     total_w = sum(weights)
     shares = [w / total_w for w in weights]
 
-    # Cap each step at 50%, then spread the excess over the uncapped steps.
-    for _ in range(10):
-        over = [i for i, s in enumerate(shares) if s > MAX_STEP_SHARE + 1e-9]
+    # Cap the first step at 25% and the rest at 50%; spread any excess over steps with room.
+    caps = [FIRST_STEP_SHARE] + [MAX_STEP_SHARE] * (len(shares) - 1)
+    for _ in range(20):
+        over = [i for i, s in enumerate(shares) if s > caps[i] + 1e-9]
         if not over:
             break
-        excess = sum(shares[i] - MAX_STEP_SHARE for i in over)
+        excess = sum(shares[i] - caps[i] for i in over)
         for i in over:
-            shares[i] = MAX_STEP_SHARE
-        room = [i for i, s in enumerate(shares) if s < MAX_STEP_SHARE - 1e-9]
+            shares[i] = caps[i]
+        room = [i for i, s in enumerate(shares) if s < caps[i] - 1e-9]
         if not room:
             break
         room_total = sum(shares[i] for i in room)
@@ -102,13 +107,13 @@ def enforce_plan(raw, total_cents):
 
     amounts = [int(total_cents * s) for s in shares]
     amounts[-1] += total_cents - sum(amounts)  # exact to the cent
-    cap = int(total_cents * MAX_STEP_SHARE)
-    # Rounding can push one step a cent over the cap; move it to a step that has room.
+    cap_cents = [int(total_cents * c) for c in caps]
+    # Rounding can push a step a cent over its cap; move it to a step that has room.
     for i, a in enumerate(amounts):
-        if a > cap:
-            extra = a - cap
-            amounts[i] = cap
-            j = min(range(len(amounts)), key=lambda k: amounts[k])
+        if a > cap_cents[i]:
+            extra = a - cap_cents[i]
+            amounts[i] = cap_cents[i]
+            j = max(range(len(amounts)), key=lambda k: cap_cents[k] - amounts[k])
             amounts[j] += extra
 
     milestones = []
@@ -129,8 +134,9 @@ def plan_job(description, total_cents):
         prompt = (
             "You help seniors pay home-repair contractors safely, step by step.\n"
             f"Job: {description}\nAgreed total: ${total_cents / 100:.2f}\n"
-            "Split the job into 2 to 4 milestones a homeowner can verify from a photo. "
-            "No milestone may be more than half the total. Use plain, friendly words.\n"
+            "Split the job into 3 to 5 milestones a homeowner can verify from a photo. "
+            "The first milestone must be 25% of the total or less, and no milestone may be "
+            "more than half the total. Use plain, friendly words.\n"
             'Reply as JSON: {"milestones":[{"title":str,"proof_needed":str,'
             '"share":number between 0 and 1}],"safety_tips":[str, up to 3 scam warnings '
             "specific to this kind of job]}"

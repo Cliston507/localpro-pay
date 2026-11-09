@@ -150,3 +150,20 @@ def test_low_confidence_photo_needs_review():
     assert v["result"] == "needs_review"
     v = ai.enforce_verdict({"looks_done": True, "confidence": 0.95, "summary": "Yes."})
     assert v["result"] == "looks_done"
+
+
+def test_first_step_is_small_even_if_ai_asks_for_half():
+    raw = {"milestones": [{"title": "Start", "share": 0.5}, {"title": "Finish", "share": 0.5}]}
+    steps, _ = ai.enforce_plan(raw, 240000)
+    assert len(steps) >= 3
+    assert sum(s["amount_cents"] for s in steps) == 240000
+    assert steps[0]["amount_cents"] <= 60000
+    assert all(s["amount_cents"] <= 120000 for s in steps)
+
+    raw = {"milestones": [{"title": "A", "share": 0.9}, {"title": "B", "share": 0.05},
+                          {"title": "C", "share": 0.05}]}
+    for total in (240000, 100001, 99, 333333):
+        steps, _ = ai.enforce_plan(raw, total)
+        assert sum(s["amount_cents"] for s in steps) == total
+        assert steps[0]["amount_cents"] <= int(total * 0.25)
+        assert all(s["amount_cents"] <= int(total * 0.5) for s in steps)
