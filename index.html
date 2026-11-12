@@ -49,6 +49,7 @@
   .error { background:#fde8e7; color:var(--bad); padding:12px; border-radius:10px; font-weight:600; }
   .log { font-size:17px; } .log div { padding:6px 0; border-bottom:1px solid #eee; }
   .hidden { display:none; }
+  .ppline { font-size:17px; margin:10px 0 0; color:#003087; }
   .warnbtn { background:var(--warn); color:#fff; }
   .bar { display:flex; height:16px; border-radius:999px; overflow:hidden; background:#e8e4d8; margin:10px 0 6px; }
   .bar span { display:block; height:100%; }
@@ -194,6 +195,17 @@ function ask({title, text, okText, okClass, needCheck, m}) {
   });
 }
 
+// Shows the real PayPal state and ID, so it's clear the money is in PayPal, not in this app.
+function paypalLine(m) {
+  const p = m.paypal || {}, tail = id => id ? ` · ID …${esc(String(id).slice(-8))}` : "";
+  let text = "";
+  if (m.status === "pending_approval") text = `Order created, waiting for approval${tail(p.order_id)}`;
+  else if (m.status === "held" || m.status === "submitted") text = `Authorized (money on hold)${tail(p.authorization_id)}`;
+  else if (m.status === "released") text = `Captured (paid to contractor)${tail(p.capture_id)}`;
+  else if (m.status === "voided") text = `Voided (hold cancelled)${tail(p.authorization_id)}`;
+  return text ? `<p class="ppline"><strong>PayPal:</strong> ${text}</p>` : "";
+}
+
 function stepActions(m, role) {
   const b = [];
   if (role === "homeowner" && (m.status === "planned" || m.status === "pending_approval"))
@@ -235,9 +247,11 @@ function render(job) {
     <section class="card step ${m.status}">
       <div class="row"><h2>Step ${m.position}: ${esc(m.title)}</h2><span class="amount">${money(m.amount_cents)}</span></div>
       <span class="badge" style="background:${color}">${label}</span>
+      ${paypalLine(m)}
       <p class="muted">Proof needed: ${esc(m.proof_needed)}</p>
       ${m.has_photo ? `<img class="proof" alt="Proof photo for step ${m.position}" src="${photoUrl(m)}">` : ""}
       ${v ? `<div class="verdict ${v.result}"><strong>AI check: ${v.result === "looks_done" ? "Looks done ✓" : "Needs a closer look"}</strong>
+              <span class="badge" style="margin-left:6px">AI is ${Math.round((v.confidence || 0) * 100)}% sure</span>
               <p style="margin:6px 0">${esc(v.summary)}</p>
               ${v.concerns.length ? `<ul>${v.concerns.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
               <button class="plain" data-act="speak" data-id="${m.id}">🔊 Read aloud</button>

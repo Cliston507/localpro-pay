@@ -97,7 +97,10 @@ def create_app(config=None):
         out["role"] = role
         out["milestones"] = [{k: m[k] for k in ("id", "position", "title", "proof_needed",
                                                 "amount_cents", "status", "ai_verdict")}
-                             | {"has_photo": bool(m["photo_file"])}
+                             | {"has_photo": bool(m["photo_file"]),
+                                "paypal": {"order_id": m["order_id"],
+                                           "authorization_id": m["authorization_id"],
+                                           "capture_id": m["capture_id"]}}
                              for m in job["milestones"]]
         if role == "homeowner":
             b = base_url()
