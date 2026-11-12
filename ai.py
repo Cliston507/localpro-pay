@@ -151,7 +151,7 @@ def plan_job(description, total_cents):
 
 
 # ---------------------------------------------------------------- inspection
-def enforce_verdict(raw):
+def enforce_verdict(raw, proof_needed=""):
     try:
         confidence = float(raw.get("confidence", 0))
     except (TypeError, ValueError):
@@ -162,12 +162,22 @@ def enforce_verdict(raw):
     concerns = [str(c)[:200] for c in (raw.get("concerns") or []) if c][:4]
     if raw.get("looks_done") and not looks_done:
         concerns.append("The AI wasn't sure enough. Please look at the photo yourself.")
+    # The contractor sees their own message, written to them, not to the homeowner.
+    contractor_note = str(raw.get("contractor_note") or "").strip()[:400]
+    if not contractor_note:
+        if looks_done:
+            contractor_note = "Thanks, your photo was sent. The helper will check it and release your payment."
+        elif proof_needed:
+            contractor_note = f"Please send a clearer photo that shows: {proof_needed}"
+        else:
+            contractor_note = "Please send a clearer photo that shows this step is done."
     return {
         "result": "looks_done" if looks_done else "needs_review",
         "confidence": round(confidence, 2),
         "summary": summary or ("The photo matches this step." if looks_done
                                else "This photo needs a closer look."),
         "concerns": concerns,
+        "contractor_note": contractor_note,
         "advisory_only": True,
     }
 
@@ -178,15 +188,18 @@ def inspect_photo(milestone_title, proof_needed, image_bytes, mime_type):
             "looks_done": True, "confidence": 0.9,
             "summary": "Demo mode: the photo was received. A real check uses Gemini.",
             "concerns": [],
-        })
+        }, proof_needed)
     prompt = (
         "You check proof-of-work photos for a senior paying a contractor.\n"
         f"Step: {milestone_title}\nProof the homeowner asked for: {proof_needed}\n"
         "Does this photo clearly show that step is done? Be skeptical: blurry, unrelated, "
         "stock-looking or screenshot photos are NOT proof. Write the summary in two short, "
-        "kind sentences a 78-year-old can understand when read aloud.\n"
+        "kind sentences a 78-year-old can understand when read aloud. The summary is for "
+        "the homeowner. Also write contractor_note: one or two short sentences spoken "
+        "directly to the contractor (say \"you\"), telling them what to send if the photo "
+        "is not good enough, or thanking them if it is.\n"
         'Reply as JSON: {"looks_done":bool,"confidence":number 0-1,'
-        '"summary":str,"concerns":[str]}'
+        '"summary":str,"contractor_note":str,"concerns":[str]}'
     )
     parts = [{"text": prompt},
              {"inline_data": {"mime_type": mime_type,
@@ -196,5 +209,6 @@ def inspect_photo(milestone_title, proof_needed, image_bytes, mime_type):
     except (AIError, requests.RequestException):
         return enforce_verdict({"looks_done": False, "confidence": 0,
                                 "summary": "The AI check isn't available right now.",
-                                "concerns": ["Please look at the photo yourself."]})
-    return enforce_verdict(raw if isinstance(raw, dict) else {})
+                                "concerns": ["Please look at the photo yourself."]},
+                               proof_needed)
+    return enforce_verdict(raw if isinstance(raw, dict) else {}, proof_needed)
