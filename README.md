@@ -33,7 +33,7 @@ If the photo had been blurry or unrelated, the AI would have flagged it, and Dan
 ```bash
 pip install -r requirements-dev.txt
 LOCALPRO_MOCK=1 python wsgi.py        # offline demo: fake PayPal, no AI key needed
-pytest -q                              # 12 end-to-end tests
+pytest -q                              # end-to-end tests
 ```
 
 For real Sandbox payments, copy `env.example` to `.env` (or set the variables on your host) and fill in:
@@ -63,6 +63,8 @@ Note: the free plan uses temporary storage, so jobs reset when the service resta
 ## Safety by design
 
 - Each role gets its own secret link; only the helper's link can release money
+- If the AI flags a proof photo, the server refuses to release money until the helper ticks "I looked at the photo myself". That choice is written to the job's history, so there's always a record of who decided
+- Every money action uses an in-app confirm screen that shows the photo, the amount and who gets paid
 - Status changes are enforced (`planned → held → submitted → released / voided`), so there are no double payments
 - Every PayPal call carries a `PayPal-Request-Id`, so retries never move money twice
 - Uploads are checked by file signature (JPG / PNG / WEBP / HEIC, 8 MB max)

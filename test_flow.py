@@ -82,6 +82,24 @@ def test_only_helper_can_release(env):
     assert r.status_code == 403
 
 
+def test_flagged_photo_needs_helper_to_confirm(env, monkeypatch):
+    client, pp = env
+    monkeypatch.setattr(ai, "inspect_photo", lambda *a: ai.enforce_verdict(
+        {"looks_done": False, "confidence": 0.3, "summary": "Just a bucket of tools."}))
+    job, keys = new_job(client)
+    m = job["milestones"][0]
+    hold(client, m["id"], keys["homeowner"])
+    client.post(f"/api/milestones/{m['id']}/photo", headers={"X-Job-Key": keys["contractor"]},
+                data={"photo": (io.BytesIO(JPEG), "a.jpg")}, content_type="multipart/form-data")
+    url, h = f"/api/milestones/{m['id']}/release", {"X-Job-Key": keys["helper"]}
+    r = client.post(url, headers=h)
+    assert r.status_code == 409 and "flagged" in r.json["error"]
+    assert "capture" not in [c[0] for c in pp.calls]
+    r = client.post(url, headers=h, json={"checked_photo": True})
+    assert r.status_code == 200
+    assert "checking the flagged photo" in r.json["events"][0]["message"]
+
+
 def test_cannot_release_without_photo(env):
     client, _ = env
     job, keys = new_job(client)

@@ -49,6 +49,19 @@
   .error { background:#fde8e7; color:var(--bad); padding:12px; border-radius:10px; font-weight:600; }
   .log { font-size:17px; } .log div { padding:6px 0; border-bottom:1px solid #eee; }
   .hidden { display:none; }
+  .warnbtn { background:var(--warn); color:#fff; }
+  .bar { display:flex; height:16px; border-radius:999px; overflow:hidden; background:#e8e4d8; margin:10px 0 6px; }
+  .bar span { display:block; height:100%; }
+  .bar .paid { background:var(--ok); } .bar .heldp { background:var(--brand); }
+  .key { font-size:16px; } .key i { display:inline-block; width:12px; height:12px; border-radius:3px; margin:0 4px 0 10px; }
+  dialog { border:0; border-radius:16px; padding:0; width:min(92vw, 520px); color:var(--ink); }
+  dialog::backdrop { background:rgba(20,33,61,.6); }
+  dialog .inner { padding:22px; }
+  dialog h2 { font-size:24px; }
+  dialog img { width:100%; max-height:140px; object-fit:cover; border-radius:10px; }
+  .flag { background:#fff4e0; border-left:6px solid var(--warn); padding:10px 12px; border-radius:8px; margin:12px 0; }
+  .check { display:flex; gap:12px; align-items:flex-start; font-weight:600; margin:14px 0 4px; }
+  .check input { width:28px; height:28px; flex:none; margin-top:2px; }
 </style>
 </head>
 <body>
@@ -60,6 +73,7 @@
   <div id="error" class="error hidden" role="alert"></div>
   <div id="app" aria-live="polite"></div>
 </main>
+<dialog id="confirm" aria-labelledby="confirmTitle"><div class="inner" id="confirmBody"></div></dialog>
 
 <script>
 const $app = document.getElementById("app");
@@ -155,6 +169,31 @@ const ROLE_INTRO = {
   helper: j => `Hi ${esc(j.helper)}. ${esc(j.homeowner)} trusts you to approve payments. Look at the photo, then release the money or cancel the hold.`,
 };
 
+const flagged = m => !m.ai_verdict || m.ai_verdict.result !== "looks_done";
+const photoUrl = m => `/api/milestones/${m.id}/photo?key=${encodeURIComponent(KEY)}&t=${Date.now()}`;
+
+// In-app confirm box (replaces the phone's plain pop-up). Resolves to {ok, checked}.
+function ask({title, text, okText, okClass, needCheck, m}) {
+  const dlg = document.getElementById("confirm"), body = document.getElementById("confirmBody");
+  body.innerHTML = `
+    <h2 id="confirmTitle">${esc(title)}</h2>
+    ${m && m.has_photo ? `<img src="${photoUrl(m)}" alt="Proof photo for step ${m.position}">` : ""}
+    <p>${esc(text)}</p>
+    ${needCheck ? `<div class="flag"><strong>The AI flagged this photo.</strong> ${esc(m.ai_verdict ? m.ai_verdict.summary : "")}</div>
+      <label class="check"><input type="checkbox" id="checked"> I looked at the photo myself, and this step is really done.</label>` : ""}
+    <div><button class="${okClass}" id="ok" ${needCheck ? "disabled" : ""}>${esc(okText)}</button>
+         <button class="plain" id="no">Go back</button></div>`;
+  return new Promise(resolve => {
+    const box = body.querySelector("#checked"), ok = body.querySelector("#ok");
+    if (box) box.onchange = () => { ok.disabled = !box.checked; };
+    const done = v => { dlg.close(); resolve(v); };
+    ok.onclick = () => done({ok: true, checked: !!(box && box.checked)});
+    body.querySelector("#no").onclick = () => done({ok: false});
+    dlg.oncancel = e => { e.preventDefault(); done({ok: false}); };
+    dlg.showModal(); body.querySelector("#no").focus();
+  });
+}
+
 function stepActions(m, role) {
   const b = [];
   if (role === "homeowner" && (m.status === "planned" || m.status === "pending_approval"))
@@ -163,7 +202,9 @@ function stepActions(m, role) {
     b.push(`<label class="btn primary" for="photo${m.id}">${m.status === "held" ? "Send proof photo" : "Send a better photo"}</label>
             <input class="hidden" type="file" accept="image/*" capture="environment" id="photo${m.id}" data-act="photo" data-id="${m.id}">`);
   if (role === "helper" && m.status === "submitted")
-    b.push(`<button class="good" data-act="release" data-id="${m.id}">Release ${money(m.amount_cents)}</button>`);
+    b.push(flagged(m)
+      ? `<button class="warnbtn" data-act="release" data-id="${m.id}">Check photo, then release</button>`
+      : `<button class="good" data-act="release" data-id="${m.id}">Release ${money(m.amount_cents)}</button>`);
   if ((role === "helper" || role === "homeowner") && (m.status === "held" || m.status === "submitted"))
     b.push(`<button class="danger" data-act="cancel" data-id="${m.id}">Cancel hold</button>`);
   return b.join("");
@@ -180,6 +221,10 @@ function render(job) {
     <div class="row"><h2>${esc(job.title)}</h2><span class="badge">You are the ${role}</span></div>
     <p>${ROLE_INTRO[role](job)}</p>
     <p class="muted">Total ${money(job.total_cents)} · Paid ${money(doneCents)} · Held ${money(heldCents)}</p>
+    <div class="bar" role="img" aria-label="${money(doneCents)} paid and ${money(heldCents)} held out of ${money(job.total_cents)}">
+      <span class="paid" style="width:${100 * doneCents / job.total_cents}%"></span>
+      <span class="heldp" style="width:${100 * heldCents / job.total_cents}%"></span></div>
+    <div class="key muted"><i style="background:var(--ok);margin-left:0"></i>Paid<i style="background:var(--brand)"></i>Held<i style="background:#e8e4d8"></i>Not paid yet</div>
   </section>`;
   if (role === "homeowner") html += `
   <section class="card"><h2>Stay safe</h2><ul class="tips">${job.safety_tips.map(t => `<li>${esc(t)}</li>`).join("")}</ul></section>`;
@@ -191,7 +236,7 @@ function render(job) {
       <div class="row"><h2>Step ${m.position}: ${esc(m.title)}</h2><span class="amount">${money(m.amount_cents)}</span></div>
       <span class="badge" style="background:${color}">${label}</span>
       <p class="muted">Proof needed: ${esc(m.proof_needed)}</p>
-      ${m.has_photo ? `<img class="proof" alt="Proof photo for step ${m.position}" src="/api/milestones/${m.id}/photo?key=${encodeURIComponent(KEY)}&t=${Date.now()}">` : ""}
+      ${m.has_photo ? `<img class="proof" alt="Proof photo for step ${m.position}" src="${photoUrl(m)}">` : ""}
       ${v ? `<div class="verdict ${v.result}"><strong>AI check: ${v.result === "looks_done" ? "Looks done ✓" : "Needs a closer look"}</strong>
               <p style="margin:6px 0">${esc(v.summary)}</p>
               ${v.concerns.length ? `<ul>${v.concerns.map(c => `<li>${esc(c)}</li>`).join("")}</ul>` : ""}
@@ -222,10 +267,26 @@ $app.addEventListener("click", e => {
   if (act === "speak") { const m = current.milestones.find(x => x.id == id); return speak(m.ai_verdict.summary); }
   if (act === "hold") return busy(t, async () => {
     const r = await api(`/api/milestones/${id}/hold`, {method: "POST"}); location.href = r.approve_url; });
-  if (act === "release" && confirm("Release this money to the contractor? This can't be undone."))
-    return busy(t, async () => { render(await api(`/api/milestones/${id}/release`, {method: "POST"})); speak("Payment released."); });
-  if (act === "cancel" && confirm("Cancel this hold? The homeowner keeps the money."))
-    return busy(t, async () => { render(await api(`/api/milestones/${id}/cancel`, {method: "POST"})); speak("Hold cancelled. The money stays with the homeowner."); });
+  const m = current && current.milestones.find(x => x.id == id);
+  if (act === "release") return (async () => {
+    const isFlagged = flagged(m);
+    const a = await ask({title: `Pay ${money(m.amount_cents)} to ${current.contractor}?`,
+      text: `This pays for step ${m.position}: ${m.title}. Once paid, it can't be undone.`,
+      okText: `Yes, release ${money(m.amount_cents)}`, okClass: "good", needCheck: isFlagged, m});
+    if (!a.ok) return;
+    busy(t, async () => {
+      render(await api(`/api/milestones/${id}/release`, {method: "POST",
+        headers: {"Content-Type": "application/json"}, body: JSON.stringify({checked_photo: a.checked})}));
+      speak("Payment released.");
+    });
+  })();
+  if (act === "cancel") return (async () => {
+    const a = await ask({title: `Cancel the hold for step ${m.position}?`,
+      text: `The ${money(m.amount_cents)} goes back to ${current.homeowner}. The contractor is not paid for this step.`,
+      okText: "Yes, cancel the hold", okClass: "danger", needCheck: false, m: null});
+    if (!a.ok) return;
+    busy(t, async () => { render(await api(`/api/milestones/${id}/cancel`, {method: "POST"})); speak("Hold cancelled. The money stays with the homeowner."); });
+  })();
 });
 
 $app.addEventListener("change", e => {

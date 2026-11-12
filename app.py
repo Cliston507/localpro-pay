@@ -247,13 +247,21 @@ def create_app(config=None):
             return err
         if m["status"] != "submitted":
             return fail("The contractor needs to send a proof photo first.", 409)
+        # Safety rail: if the AI flagged the photo, the helper must say they checked it themselves.
+        verdict = m["ai_verdict"] or {}
+        flagged = verdict.get("result") != "looks_done"
+        body = request.get_json(silent=True) or {}
+        if flagged and body.get("checked_photo") is not True:
+            return fail("The AI flagged this photo. Please confirm you looked at it "
+                        "yourself before releasing the money.", 409)
         try:
             capture_id = paypal.capture(m["authorization_id"])
         except paypal_client.PayPalError as exc:
             return fail(str(exc), 502)
         store.update_milestone(mid, "released", capture_id=capture_id)
+        note = " after checking the flagged photo themselves" if flagged else ""
         store.log(job["id"], job["helper"],
-                  f"Released ${m['amount_cents'] / 100:,.2f} for step {m['position']}.")
+                  f"Released ${m['amount_cents'] / 100:,.2f} for step {m['position']}{note}.")
         return jsonify(public_job(store.get_job(job["id"]), role))
 
     @app.post("/api/milestones/<int:mid>/cancel")
